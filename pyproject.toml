@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "document-extracter"
+version = "0.1.0"
+description = ""
+authors = ["marykorol98 <mashak.1998@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+langchain = "^1.1.0"
+langchain-community = "^0.4.1"
+langchainhub = "^0.1.21"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
