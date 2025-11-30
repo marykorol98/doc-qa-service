@@ -1,10 +1,8 @@
 import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from langchain.schema import HumanMessage
 
 import os
 import logging
@@ -12,14 +10,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
 
 
 class DocLLM:
-    MAX_LOG_LENGTH = 120
-    MAX_CONTEXT_CHARS = 20000
-
-    def __init__(self):
+    def __init__(self, logger: logging.Logger | None = None):
+        self._logger = logger
         self.model_id = os.getenv("LLM_REPO_ID")
         self.token = os.getenv("HF_API_TOKEN")
 
@@ -36,6 +31,10 @@ class DocLLM:
         self.questions = {}
 
         self.persist_dir: str = "chroma_store"
+        
+    def logger(self, msg: str):
+        if self._logger:
+            self._logger.info(msg)
 
     def clean_text(self, text: str) -> str:
         text = text.replace("\r", "")
@@ -65,7 +64,7 @@ class DocLLM:
         """Создаёт Chroma векторное хранилище."""
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-mpnet-base-v2",
-            model_kwargs={"device": "cuda"}
+            model_kwargs={"device": "cuda"},
         )
 
         return Chroma.from_texts(
@@ -83,24 +82,14 @@ class DocLLM:
             chunks_enumerated, persist_dir=self.persist_dir
         )
 
-        logger.info(
-            f"Saved context: {doc_text[: self.MAX_LOG_LENGTH] if len(doc_text) > self.MAX_LOG_LENGTH else doc_text}"
-        )
-
-    @property
-    def prompt(self):
-        return ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "Ты юридический ассистент. "
-                    "Отвечай строго на основе предоставленных фрагментов документа. "
-                    "Не придумывай ничего. Если информации нет — скажи, что не содержится в контракте.\n\n"
-                    "Фрагменты контракта:\n{context}",
-                ),
-                ("user", "{question}"),
-            ]
-        )
+    def prompt(self, context: str, question: str) -> list[tuple[str]]:
+        return [
+            (
+                "system",
+                f"Ты юридический ассистент. Отвечай строго по документу:\n{context}",
+            ),
+            ("human", question),
+        ]
 
     @property
     def chain(self):
@@ -118,15 +107,14 @@ class DocLLM:
         texts = retriever._get_relevant_documents(question, run_manager=None)
         context = "\n\n".join(d.page_content for d in texts)
 
-        # Формируем prompt вручную
-        prompt_text = self.prompt.format(context=context, question=question)
+        self.logger(f"context:\n\n{context}")
+
+        prompt_messages = self.prompt(context=context, question=question)
 
         # Генерируем ответ через LLM
-        result = self.llm.predict_messages([HumanMessage(content=prompt_text)])
-        answer = result[0].content if result else ""
-        print(answer)
-        
-        # result = chain.invoke({"context": context, "question": question})
+        response = self.llm.invoke(prompt_messages)
+        answer = response.content
+        self.logger(answer)
 
         self.questions[q_id] = {
             "file_id": file_id,

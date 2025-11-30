@@ -3,10 +3,16 @@ from fastapi.responses import JSONResponse
 from uuid import uuid4
 import requests
 from llm import DocLLM
+import logging
+
+from utils import MaxLengthFilter
+
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.INFO)
 
 app = FastAPI()
 
-llm = DocLLM()
+llm = DocLLM(logger=logger)
 
 
 @app.post("/upload")
