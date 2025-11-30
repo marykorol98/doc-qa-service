@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-
 class DocLLM:
     def __init__(self, logger: logging.Logger | None = None):
         self._logger = logger
@@ -31,7 +30,7 @@ class DocLLM:
         self.questions = {}
 
         self.persist_dir: str = "chroma_store"
-        
+
     def logger(self, msg: str):
         if self._logger:
             self._logger.info(msg)
