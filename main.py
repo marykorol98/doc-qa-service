@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from uuid import uuid4
-import requests
 from llm import DocLLM
 import logging
+from utils import get_google_doc_text
 
 logger = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.INFO)
@@ -16,13 +16,10 @@ llm = DocLLM(logger=logger)
 @app.post("/upload")
 async def upload_file(url: str) -> dict[str, str]:
     file_id = str(uuid4())
-
     # Загружаем текст Google Docs в plain text
-    resp = requests.get(url)
-    if resp.status_code != 200:
-        return {"error": "failed to download url"}
+    text = get_google_doc_text(url)
 
-    llm.load_context_from_doc(file_id, resp.text)
+    llm.load_context_from_doc(file_id, text)
 
     return {"file_id": file_id}
 
