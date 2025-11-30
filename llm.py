@@ -1,5 +1,6 @@
-import requests
-from huggingface_hub import InferenceClient
+import re
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_core.prompts import ChatPromptTemplate
 import os
 import logging
 from dotenv import load_dotenv
@@ -17,69 +18,48 @@ class DocLLM:
         self.model_id = os.getenv("LLM_REPO_ID")
         self.token = os.getenv("HF_API_TOKEN")
 
-        self.api_url = "https://router.huggingface.co/v1/chat/completions"
-        self.headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
-        }
-
-        self._model = InferenceClient(
-            model=os.getenv("LLM_REPO_ID"),
-            token=os.getenv("HF_API_TOKEN"),
+        # LangChain модель
+        base_llm = HuggingFaceEndpoint(
+            repo_id=self.model_id,
+            huggingfacehub_api_token=self.token,
+            task="conversational",
         )
-        self.context: dict[str, str] = {}
 
-        self.questions: dict[str, str] = {}
+        self.llm = ChatHuggingFace(llm=base_llm)
 
-    @property
-    def model(self):
-        return self._model
+        self.context = {}
+        self.questions = {}
+
+    def clean_text(self, text: str) -> str:
+        text = text.replace("\r", "")
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"[ \t]+", " ", text)
+        text = text.strip()
+        return text
 
     def load_context_from_doc(self, doc_id, doc_text: str):
-        self.context[doc_id] = doc_text
+        self.context[doc_id] = self.clean_text(doc_text)
         logger.info(
             f"Saved context: {doc_text[: self.MAX_LOG_LENGTH] if len(doc_text) > self.MAX_LOG_LENGTH else doc_text}"
         )
 
-    def prompt(self, context: str, question: str):
-        context = context[: self.MAX_CONTEXT_CHARS]
-
-        return f"""Контекст:
-        {context}
-
-        Вопрос: {question}
-
-        Ответь кратко и по делу.
-        """
+    @property
+    def prompt(self):
+        return ChatPromptTemplate.from_messages(
+            [
+                ("system", "Ты отвечаешь кратко по делу."),
+                ("human", "Контекст:\n{context}\n\nВопрос: {question}"),
+            ]
+        )
 
     def ask(self, q_id: str, file_id: str, question: str) -> str:
-        prompt = self.prompt(self.context.get(file_id, ""), question)
+        context = self.context.get(file_id, "")
 
-        payload = {
-            "model": self.model_id,
-            "messages": [{"role": "user", "content": prompt}],
-        }
+        chain = self.prompt | self.llm
+        result = chain.invoke({"context": context, "question": question})
 
-        response = requests.post(
-            self.api_url, headers=self.headers, json=payload, timeout=60
-        )
-        data = response.json()
-
-        print(data)
-
-        # Формат:
-        # {
-        #   "choices": [
-        #     {"message": {"role": "assistant", "content": "..."}}
-        #   ]
-        # }
-
-        answer = data["choices"][0]["message"]["content"]
-
-        logger.info(
-            f"Generated answer: {answer[: self.MAX_LOG_LENGTH] if len(answer) > self.MAX_LOG_LENGTH else answer}"
-        )
-
+        answer = result.content
+        print(result)
         self.questions[q_id] = {
             "file_id": file_id,
             "question": question,
