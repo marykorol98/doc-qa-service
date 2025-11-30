@@ -3,8 +3,13 @@ import shutil
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_chroma import Chroma
+from langchain_core.prompts import PromptTemplate
 import unicodedata
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers.ensemble import EnsembleRetriever
+from langchain_core.documents import Document
 
 import os
 import logging
@@ -46,32 +51,41 @@ class DocLLM:
         text = text.replace('\\"', '"')  # экранированные кавычки
 
         text = re.sub(r"\\+", "", text)
-        text = re.sub(r"\n\s*\n+", "\n\n", text)
+        text = re.sub(r"\n\s*\n+", "\n\n", text)  # сжимаем лишние пустые строки
 
-        # Сжимаем пробелы и табы
+        # Сжимаем пробелы и табы **внутри строк**, но не убираем \n
         text = re.sub(r"[ \t]+", " ", text)
 
         text = unicodedata.normalize("NFKC", text)
-        text = re.sub(r"\s+", " ", text)  # объединяем пробелы
+        # убираем лишние пробелы вокруг \n, но не объединяем все строки
+        text = re.sub(r"[ ]*\n[ ]*", "\n", text)
+
         text = re.sub(r"<[^>]+>", "", text)  # удаляем HTML-теги
 
         return text.strip()
 
     def text_splitter(self, text: str) -> list[str]:
         """
-        Сплиттер для договора по логическим частям.
+        Сплиттер для договора:
+        - делит на основной текст + приложения
+        - потом рекурсивно делит каждый блок на пункты/подпункты
         """
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50,
             separators=[
-                r"\d+\.",  # пункты вида "1."
-                r"\d+\.\d+\.",  # подпункты вида "1.1"
-                r"[a-zA-Z]\)",  # подпункты вида "a)"
-                " ",  # fallback по пробелам
-                "",  # fallback по символам
+                # "\n\n",
+                r"Приложение\s*№\d+",
+                r"Договор\s*№[\w\-.\/]+",
+                r"\d+\.",
+                r"\d+\.\d+\.\d+",
+                r"\d+\.\d+",
+                r"[a-zA-Z]\)",
+                " ",
+                "",
             ],
         )
+
         split_parts = splitter.split_text(text)
 
         return split_parts
@@ -117,9 +131,11 @@ class DocLLM:
                 Отвечай строго на основе предоставленного документа. 
                 - Используй только информацию из документа. 
                 - Давай краткие и точные ответы, без лишней информации. 
-                - Используй информацию как из основного текста, так и из приложений к документу.
+                - Отвечай строго на русском языке.
+                - Запрещено использовать другие языки, включая китайский, английский, латиницу, и смешанные строки.
                 - Если информации недостаточно для точного ответа, скажи «информация в документе отсутствует». 
-
+                - Используй из внешних источников знания о том, в каком месте документа (РФ) обычно распологается искомая информация.
+                - Если нужно искать числовые данные, то не забывай распознавать и сопоставлять числа (суммы, идентификаторы)
                 Документ:
                 {context}""",
             ),
@@ -127,13 +143,44 @@ class DocLLM:
         ]
 
     def ask(self, q_id: str, file_id: str, question: str) -> str:
-        vector_store = self.context.get(file_id, "")
+        vector_store = self.context.get(file_id)
 
         if not vector_store:
             raise RuntimeError("Document is not loaded!")
 
-        retriever = vector_store.as_retriever(search_kwargs={"k": 15})
-        texts = retriever._get_relevant_documents(question, run_manager=None)
+        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+
+        mq_prompt = PromptTemplate(
+            input_variables=["question"],
+            template=(
+                "Ты — помощник, который помогает искать юридические данные.\n"
+                "Сгенерируй 5 разных формулировок вопроса, включая варианты, которые ищут информацию "
+                "в приложениях, в шапках, подписях, реквизитах, таблицах, примечаниях.\n\n"
+                "Вопрос: {question}"
+            ),
+        )
+
+        raw = vector_store.get(include=["documents", "metadatas"])
+        docs = [
+            Document(page_content=text, metadata=meta or {})
+            for text, meta in zip(raw["documents"], raw["metadatas"])
+        ]
+
+        bm25 = BM25Retriever.from_documents(docs)
+        bm25.k = 5
+
+        hybrid_retriever = EnsembleRetriever(
+            retrievers=[retriever, bm25],
+            weights=[0.6, 0.4],
+        )
+
+        multi_retriever = MultiQueryRetriever.from_llm(
+            retriever=hybrid_retriever,
+            llm=self.llm,
+            prompt=mq_prompt,
+        )
+        texts = multi_retriever.invoke(question)
+        # texts = retriever._get_relevant_documents(question, run_manager=None)
         context = "\n\n".join(d.page_content for d in texts)
 
         self.logger(f"context:\n\n{context}")
