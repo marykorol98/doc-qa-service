@@ -78,8 +78,8 @@ class DocLLM:
                 r"Приложение\s*№\d+",
                 r"Договор\s*№[\w\-.\/]+",
                 r"\d+\.",
-                r"\d+\.\d+\.\d+",
-                r"\d+\.\d+",
+                # r"\d+\.\d+\.\d+",
+                # r"\d+\.\d+",
                 r"[a-zA-Z]\)",
                 " ",
                 "",
@@ -141,8 +141,11 @@ class DocLLM:
             ),
             ("human", question),
         ]
-
-    def ask(self, q_id: str, file_id: str, question: str) -> str:
+        
+    def get_rag_context(self, question: str, file_id: str) -> str:
+        """
+        Получаем контекст из документа
+        """
         vector_store = self.context.get(file_id)
 
         if not vector_store:
@@ -150,39 +153,43 @@ class DocLLM:
 
         retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
-        mq_prompt = PromptTemplate(
-            input_variables=["question"],
-            template=(
-                "Ты — помощник, который помогает искать юридические данные.\n"
-                "Сгенерируй 5 разных формулировок вопроса, включая варианты, которые ищут информацию "
-                "в приложениях, в шапках, подписях, реквизитах, таблицах, примечаниях.\n\n"
-                "Вопрос: {question}"
-            ),
-        )
+        # mq_prompt = PromptTemplate(
+        #     input_variables=["question"],
+        #     template=(
+        #         "Ты — помощник, который помогает искать юридические данные.\n"
+        #         "Сгенерируй 5 разных формулировок вопроса, включая варианты, которые ищут информацию "
+        #         "в приложениях, в шапках, подписях, реквизитах, таблицах, примечаниях.\n\n"
+        #         "Вопрос: {question}"
+        #     ),
+        # )
 
-        raw = vector_store.get(include=["documents", "metadatas"])
-        docs = [
-            Document(page_content=text, metadata=meta or {})
-            for text, meta in zip(raw["documents"], raw["metadatas"])
-        ]
+        # raw = vector_store.get(include=["documents", "metadatas"])
+        texts = vector_store.get(include=["documents"])
+        # docs = [
+        #     Document(page_content=text, metadata=meta or {})
+        #     for text, meta in zip(raw["documents"], raw["metadatas"])
+        # ]
 
-        bm25 = BM25Retriever.from_documents(docs)
-        bm25.k = 5
+        # bm25 = BM25Retriever.from_documents(docs)
+        # bm25.k = 5
 
-        hybrid_retriever = EnsembleRetriever(
-            retrievers=[retriever, bm25],
-            weights=[0.6, 0.4],
-        )
+        # hybrid_retriever = EnsembleRetriever(
+        #     retrievers=[retriever, bm25],
+        #     weights=[0.6, 0.4],
+        # )
 
-        multi_retriever = MultiQueryRetriever.from_llm(
-            retriever=hybrid_retriever,
-            llm=self.llm,
-            prompt=mq_prompt,
-        )
-        texts = multi_retriever.invoke(question)
-        # texts = retriever._get_relevant_documents(question, run_manager=None)
+        # multi_retriever = MultiQueryRetriever.from_llm(
+        #     retriever=hybrid_retriever,
+        #     llm=self.llm,
+        #     prompt=mq_prompt,
+        # )
+        # texts = multi_retriever.invoke(question)
+        texts = retriever._get_relevant_documents(question, run_manager=None)
         context = "\n\n".join(d.page_content for d in texts)
+        return context        
 
+    def ask(self, q_id: str, file_id: str, question: str) -> str:
+        context = self.get_rag_context(question, file_id)
         self.logger(f"context:\n\n{context}")
 
         prompt_messages = self.prompt(context=context, question=question)
