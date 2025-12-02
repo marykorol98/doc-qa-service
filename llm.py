@@ -1,15 +1,11 @@
 import re
 import shutil
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_chroma import Chroma
-from langchain_core.prompts import PromptTemplate
 import unicodedata
-from langchain_community.retrievers import BM25Retriever
-from langchain_classic.retrievers.ensemble import EnsembleRetriever
-from langchain_core.documents import Document
+from langchain_classic.retrievers import MultiQueryRetriever
+import ftfy
 
 import os
 import logging
@@ -44,8 +40,10 @@ class DocLLM:
         if self._logger:
             self._logger.info(msg)
 
+    # TODO: ривизнуть и убрать лишнее
     def clean_text(self, raw_text: str) -> str:
-        text = raw_text.replace("\ufeff", "")  # BOM
+        text = ftfy.fix_text(raw_text)
+        text = text.replace("\ufeff", "")  # BOM
         text = text.replace("\r", "")  # возврат каретки
         text = text.replace("\\n", "\n")  # экранированные переносы
         text = text.replace('\\"', '"')  # экранированные кавычки
@@ -64,43 +62,10 @@ class DocLLM:
 
         return text.strip()
 
-    # def text_splitter(self, text: str) -> list[str]:
-    #     """
-    #     Сплиттер для договора:
-    #     - делит на основной текст + приложения
-    #     - потом рекурсивно делит каждый блок на пункты/подпункты
-    #     """
-    #     splitter = RecursiveCharacterTextSplitter(
-    #         chunk_size=500,
-    #         chunk_overlap=50,
-    #         separators=[
-    #             # "\n\n",
-    #             r"Приложение\s*№\d+",
-    #             r"Договор\s*№[\w\-.\/]+",
-    #             r"\d+\.",
-    #             # r"\d+\.\d+\.\d+",
-    #             # r"\d+\.\d+",
-    #             r"[a-zA-Z]\)",
-    #             " ",
-    #             "",
-    #         ],
-    #     )
-
-    #     split_parts = splitter.split_text(text)
-
-    #     return split_parts
-    
-    # def split_contract(self, text):
-    #     pattern = r"(?=(?:\n\d+\.\s)|(?:\n\d+\.\d+\.\s)|(?:Приложение\s*№\s*\d+))"
-    #     parts = re.split(pattern, text)
-        
-    #     # TODO: 1. ПРЕДМЕТ ДОГОВОРА выделяется в отдельный чанк, это неправильно
-    #     # возможно лучше держать chunk_size ≥ 1200–1500 токенов
-    #     return [p.strip() for p in parts if p.strip()]
-    
-    def split_contract(self, text: str,
-                    max_chunk_size: int = 2500,
-                    overlap: int = 200) -> list[str]:
+    # TODO: ревизнуть функцию и убрать всё лишнее
+    def split_contract(
+        self, text: str, max_chunk_size: int = 2500, overlap: int = 200
+    ) -> list[str]:
         """
         Делит договор на большие смысловые разделы (1., 2., 3.) + режет по длине.
         Не выделяет заголовки в отдельные чанки.
@@ -173,7 +138,6 @@ class DocLLM:
 
     def load_context_from_doc(self, doc_id, doc_text: str):
         text_clean = self.clean_text(doc_text)
-        # text_split = self.text_splitter(text_clean)
         text_split = self.split_contract(text_clean)
         chunks_enumerated = self.enumerate_chunks(text_split)
 
@@ -199,7 +163,14 @@ class DocLLM:
             ),
             ("human", question),
         ]
-        
+
+    def get_retriever(self, vector_store):
+        return vector_store.as_retriever(search_kwargs={"k": 5})
+        # return MultiQueryRetriever.from_llm(
+        #     llm=self.llm,
+        #     retriever=vector_store.as_retriever(search_kwargs={"k": 5})
+        # )
+
     def get_rag_context(self, question: str, file_id: str) -> str:
         """
         Получаем контекст из документа
@@ -209,17 +180,15 @@ class DocLLM:
         if not vector_store:
             raise RuntimeError("Document is not loaded!")
 
-        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
-        
-        texts = vector_store.get(include=["documents"])
+        retriever = self.get_retriever(vector_store)
 
-
-        texts = retriever._get_relevant_documents(question, run_manager=None)
+        texts = retriever.invoke(question)
         context = "\n\n".join(d.page_content for d in texts)
-        return context        
+        return context
 
     def ask(self, q_id: str, file_id: str, question: str) -> str:
         context = self.get_rag_context(question, file_id)
+
         self.logger(f"context:\n\n{context}")
 
         prompt_messages = self.prompt(context=context, question=question)
@@ -237,36 +206,3 @@ class DocLLM:
         }
 
         return answer
-
-
-# TODO: варианты для RAG
-        # mq_prompt = PromptTemplate(
-        #     input_variables=["question"],
-        #     template=(
-        #         "Ты — помощник, который помогает искать юридические данные.\n"
-        #         "Сгенерируй 5 разных формулировок вопроса, включая варианты, которые ищут информацию "
-        #         "в приложениях, в шапках, подписях, реквизитах, таблицах, примечаниях.\n\n"
-        #         "Вопрос: {question}"
-        #     ),
-        # )
-
-        # raw = vector_store.get(include=["documents", "metadatas"])
-        # docs = [
-        #     Document(page_content=text, metadata=meta or {})
-        #     for text, meta in zip(raw["documents"], raw["metadatas"])
-        # ]
-
-        # bm25 = BM25Retriever.from_documents(docs)
-        # bm25.k = 5
-
-        # hybrid_retriever = EnsembleRetriever(
-        #     retrievers=[retriever, bm25],
-        #     weights=[0.6, 0.4],
-        # )
-
-        # multi_retriever = MultiQueryRetriever.from_llm(
-        #     retriever=hybrid_retriever,
-        #     llm=self.llm,
-        #     prompt=mq_prompt,
-        # )
-        # texts = multi_retriever.invoke(question)

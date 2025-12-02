@@ -36,7 +36,9 @@ async def ask_question(file_id: str, question: str) -> dict[str, str]:
 @app.get("/answer")
 async def get_answer(q_id: str):
     if q_id not in llm.questions:
-        return JSONResponse({"status": "error", "error": "question not found"}, status_code=404)
+        return JSONResponse(
+            {"status": "error", "error": "question not found"}, status_code=404
+        )
 
     q = llm.questions[q_id]
 
