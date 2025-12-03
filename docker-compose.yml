@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  rag-api:
+    build: .
+    container_name: rag-api
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./chroma_store:/app/chroma_store  
+    gpus: all
+    env_file:
+      - .env                         

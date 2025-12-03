@@ -5,6 +5,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 import unicodedata
 from langchain_classic.retrievers import MultiQueryRetriever
+import torch
 import ftfy
 
 import os
@@ -35,6 +36,10 @@ class DocLLM:
         self.questions = {}
 
         self.persist_dir: str = "chroma_store"
+        
+    @property
+    def device(self) -> str:
+        return "cuda" if torch.cuda.is_available() else "cpu"
 
     def logger(self, msg: str):
         if self._logger:

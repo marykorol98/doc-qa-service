@@ -3,7 +3,7 @@ name = "document-extracter"
 version = "0.1.0"
 description = ""
 authors = ["marykorol98 <mashak.1998@gmail.com>"]
-readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 # TODO: delete deprecated
