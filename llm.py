@@ -45,8 +45,10 @@ class DocLLM:
         if self._logger:
             self._logger.info(msg)
 
-    # TODO: ривизнуть и убрать лишнее
     def clean_text(self, raw_text: str) -> str:
+        """
+        Чистит текст: исправляет кодировки, удаляет BOM, HTML-теги, лишние пробелы и дублирующиеся строки.
+        """
         text = ftfy.fix_text(raw_text)
         text = text.replace("\ufeff", "")  # BOM
         text = text.replace("\r", "")  # возврат каретки
@@ -55,28 +57,30 @@ class DocLLM:
 
         text = re.sub(r"\\+", "", text)
         text = re.sub(r"\n\s*\n+", "\n\n", text)  # сжимаем лишние пустые строки
-
-        # Сжимаем пробелы и табы **внутри строк**, но не убираем \n
-        text = re.sub(r"[ \t]+", " ", text)
-
-        text = unicodedata.normalize("NFKC", text)
-        # убираем лишние пробелы вокруг \n, но не объединяем все строки
-        text = re.sub(r"[ ]*\n[ ]*", "\n", text)
-
+        text = re.sub(r"[ \t]+", " ", text)  # сжимаем пробелы и табы внутри строк
+        text = re.sub(r"[ ]*\n[ ]*", "\n", text)  # убираем лишние пробелы вокруг \n
         text = re.sub(r"<[^>]+>", "", text)  # удаляем HTML-теги
+        text = unicodedata.normalize("NFKC", text)
 
-        return text.strip()
+        # удаляем дублирующиеся строки, сохраняя порядок
+        lines = text.split("\n")
+        seen = set()
+        unique_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            if line_stripped and line_stripped not in seen:
+                seen.add(line_stripped)
+                unique_lines.append(line_stripped)
 
-    # TODO: ревизнуть функцию и убрать всё лишнее
+        return "\n".join(unique_lines).strip()
+
     def split_contract(
-        self, text: str, max_chunk_size: int = 2500, overlap: int = 200
+        self, text: str, max_chunk_size: int = 2500, overlap: int = 200, min_chunk_size: int = 500
     ) -> list[str]:
         """
-        Делит договор на большие смысловые разделы (1., 2., 3.) + режет по длине.
-        Не выделяет заголовки в отдельные чанки.
+        Делит договор на смысловые разделы и по длине.
+        Очень короткие чанки (< min_chunk_size) объединяются с предыдущими.
         """
-
-        # 1. Находим разделы: "1. ...", "2. ...", "Приложение № ..."
         section_pattern = r"(?=(?:\n\d+\.\s+)|(?:\nПриложение\s*№\s*\d+))"
         raw_sections = re.split(section_pattern, text)
 
@@ -85,34 +89,25 @@ class DocLLM:
             sec = sec.strip()
             if not sec:
                 continue
-
-            # Пример секции:
-            # "1. ПРЕДМЕТ ДОГОВОРА\nТекст текста..."
             lines = sec.split("\n", 1)
-            if len(lines) == 1:
-                # редкий случай: нет тела
-                header = lines[0]
-                body = ""
-            else:
-                header, body = lines[0].strip(), lines[1].strip()
+            header = lines[0].strip()
+            body = lines[1].strip() if len(lines) > 1 else ""
+            sections.append(header + "\n" + body)
 
-            # 2. Склеиваем заголовок и тело в один чанк
-            full_text = header + "\n" + body
-            sections.append(full_text)
-
-        # 3. Дальше режем каждый раздел по длине
         chunks = []
         for sec in sections:
             start = 0
             while start < len(sec):
                 end = start + max_chunk_size
-                part = sec[start:end]
-
-                # добавляем overlap, чтобы не резать смысл
                 if end < len(sec):
-                    end = end - overlap
-
-                chunks.append(part.strip())
+                    end -= overlap
+                part = sec[start:end].strip()
+                if part:
+                    # объединяем слишком короткие чанки с предыдущим
+                    if chunks and len(part) < min_chunk_size:
+                        chunks[-1] += "\n" + part
+                    else:
+                        chunks.append(part)
                 start = end
 
         return chunks
@@ -132,7 +127,7 @@ class DocLLM:
 
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-mpnet-base-v2",
-            model_kwargs={"device": "cuda"},
+            model_kwargs={"device": self.device},
         )
 
         return Chroma.from_texts(
