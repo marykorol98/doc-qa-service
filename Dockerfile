@@ -1,23 +1,28 @@
-FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
+FROM python:3.11-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    POETRY_VERSION=1.7.1 \
+    POETRY_HOME=/opt/poetry \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false
+
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y software-properties-common curl git \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y \
-       python3.12 python3.12-venv python3.12-dev \
-    && ln -s /usr/bin/python3.12 /usr/bin/python \
-    && curl -sS https://bootstrap.pypa.io/get-pip.py | python \
-    && python -m pip install --upgrade pip poetry \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3-dev \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir torch==2.2.0+cu121 --index-url https://download.pytorch.org/whl/cu121
+# Poetry
+RUN curl -sSL https://install.python-poetry.org | python3 - \
+    && ln -s /opt/poetry/bin/poetry /usr/local/bin/poetry
 
 COPY pyproject.toml poetry.lock* /app/
-
-RUN poetry config virtualenvs.create false && \
-    poetry install --no-interaction --no-ansi
+RUN poetry install --no-root --no-dev
 
 COPY . /app
 

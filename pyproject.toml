@@ -3,7 +3,6 @@ name = "document-extracter"
 version = "0.1.0"
 description = ""
 authors = ["marykorol98 <mashak.1998@gmail.com>"]
-package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
@@ -15,7 +14,7 @@ langchain-chroma = "^1.0.0"
 sentence-transformers = "^5.1.2"
 ftfy = "^6.3.1" # доп очистка
 scipy = { version = "^1.16.3", python = "*" }
-sentencepiece = "^0.2.1"
+langchain-classic = "^1.0.0"
 
 [build-system]
 requires = ["poetry-core"]
