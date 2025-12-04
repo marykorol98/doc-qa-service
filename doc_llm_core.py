@@ -1,7 +1,10 @@
 import re
 
-from tqdm import tqdm
 import logging
+from torch import Generator
+
+
+from utils import set_global_seed
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -21,6 +24,8 @@ from schemas import PROMPT_TYPE
 
 load_dotenv()
 
+SEED = 47
+
 
 class DocLLM:
     def __init__(self, logger: logging.Logger | None = None):
@@ -28,14 +33,19 @@ class DocLLM:
         self.model_id = os.getenv("LLM_REPO_ID")
         self.token = os.getenv("HF_API_TOKEN")
 
+        set_global_seed(SEED)
+
         # LangChain модель
-        base_llm = HuggingFaceEndpoint(
+        self.base_llm = HuggingFaceEndpoint(
             repo_id=self.model_id,
             huggingfacehub_api_token=self.token,
             task="conversational",
+            # для воспроизводимости
+            temperature=0,
+            do_sample=False,
         )
 
-        self.llm = ChatHuggingFace(llm=base_llm)
+        self.llm = ChatHuggingFace(llm=self.base_llm)
 
         self.context = {}
         self.questions = {}
@@ -87,27 +97,6 @@ class DocLLM:
 
         return raw_sections
 
-    # TODO: подумать, как реализовать
-    # def build_summaries(self, chunks: list[str]) -> list[str]:
-    #     """Создаёт краткие резюме для каждого фрагмента документа с прогресс-баром."""
-    #     summaries = []
-    #     logging.info("Начало создания резюме для %d фрагментов", len(chunks))
-
-    #     for i, chunk in enumerate(tqdm(chunks, desc="Обработка фрагментов", unit="chunk"), start=1):
-    #         try:
-    #             prompt = [
-    #                 ("system", "Ты юридический ассистент. Сделай краткое резюме следующего текста."),
-    #                 ("human", chunk),
-    #             ]
-    #             summary = self.summary_llm_runable.invoke(prompt)
-    #             summaries.append(summary)
-    #         except Exception as e:
-    #             logging.error("Ошибка при обработке фрагмента %d: %s", i, str(e))
-    #             summaries.append("")  # добавляем пустое резюме при ошибке
-
-    #     logging.info("Создание резюме завершено")
-    #     return summaries
-
     def enumerate_chunks(self, chunks: list[str]) -> list[str]:
         """Добавляет CHUNK i/n заголовки."""
         total = len(chunks)
@@ -123,8 +112,11 @@ class DocLLM:
             model_kwargs={"device": self.device},
         )
 
+        # Для воспроизводимости
+        chunks_sorted = sorted(chunks, key=lambda x: hash(x))
+
         text_store = Chroma.from_texts(
-            texts=chunks,
+            texts=chunks_sorted,
             embedding=embeddings,
             persist_directory=os.path.join(persist_dir),
         )
@@ -161,9 +153,12 @@ class DocLLM:
 
     def get_retriever(self, vector_store):
         """Multihop: сначала summary, потом уточнение full_text."""
-        summary_retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
-        return MultiQueryRetriever.from_llm(llm=self.llm, retriever=summary_retriever)
+        multiretriever = MultiQueryRetriever.from_llm(
+            llm=self.base_llm, retriever=retriever
+        )
+        return multiretriever
 
     def get_rag_context(self, question: str, file_id: str) -> str:
         vector_store = self.context.get(file_id)
