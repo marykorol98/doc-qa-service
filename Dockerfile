@@ -1,30 +1,37 @@
-FROM python:3.11-slim
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    DEBIAN_FRONTEND=noninteractive \
-    POETRY_VERSION=1.7.1 \
-    POETRY_HOME=/opt/poetry \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_CREATE=false
+# ===== Build Stage =====
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-dev \
-    git \
-    curl \
+    python3-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Poetry
-RUN curl -sSL https://install.python-poetry.org | python3 - \
-    && ln -s /opt/poetry/bin/poetry /usr/local/bin/poetry
+# Устанавливаем Poetry в стандартный путь и добавляем в PATH
+ENV POETRY_HOME="/opt/poetry"
+ENV PATH="$POETRY_HOME/bin:$PATH"
+RUN curl -sSL https://install.python-poetry.org | python3 -
 
+# Копируем только pyproject.toml и poetry.lock для кэширования слоёв
 COPY pyproject.toml poetry.lock* /app/
-RUN poetry install --no-root --no-dev
 
+# Устанавливаем зависимости без dev-зависимостей
+RUN poetry install --no-root \
+    && rm -rf /root/.cache/pip /root/.cache/pypoetry
+
+# Копируем весь код проекта
 COPY . /app
+
+# ===== Runtime Stage =====
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /app /app
+
+RUN apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* /root/.cache/pip
 
 EXPOSE 8000
 
