@@ -1,30 +1,22 @@
-import re
-
 import logging
-from torch import Generator
-
-
-from utils import set_global_seed
+import re
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-import unicodedata
-from langchain_classic.retrievers import MultiQueryRetriever
-import torch
-import ftfy
-
 import os
+import unicodedata
+
+import ftfy
+import torch
 from dotenv import load_dotenv
+from langchain_chroma import Chroma
+from langchain_huggingface import (ChatHuggingFace, HuggingFaceEmbeddings,
+                                   HuggingFaceEndpoint)
 
 from schemas import PROMPT_TYPE
 
 load_dotenv()
-
-SEED = 47
 
 
 class DocLLM:
@@ -33,10 +25,8 @@ class DocLLM:
         self.model_id = os.getenv("LLM_REPO_ID")
         self.token = os.getenv("HF_API_TOKEN")
 
-        set_global_seed(SEED)
-
         # LangChain модель
-        self.base_llm = HuggingFaceEndpoint(
+        base_llm = HuggingFaceEndpoint(
             repo_id=self.model_id,
             huggingfacehub_api_token=self.token,
             task="conversational",
@@ -45,7 +35,7 @@ class DocLLM:
             do_sample=False,
         )
 
-        self.llm = ChatHuggingFace(llm=self.base_llm)
+        self.llm = ChatHuggingFace(llm=base_llm)
 
         self.context = {}
         self.questions = {}
@@ -105,20 +95,16 @@ class DocLLM:
             output.append(f"=== CHUNK {i}/{total} ===\n{ch}")
         return output
 
-    def build_vector_store(self, chunks: list[str], persist_dir: str = "chroma_store"):
+    def build_vector_store(self, chunks: list[str]):
         """Создаёт Chroma хранилище для текстов"""
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-mpnet-base-v2",
             model_kwargs={"device": self.device},
         )
 
-        # Для воспроизводимости
-        chunks_sorted = sorted(chunks, key=lambda x: hash(x))
-
         text_store = Chroma.from_texts(
-            texts=chunks_sorted,
+            texts=chunks,
             embedding=embeddings,
-            persist_directory=os.path.join(persist_dir),
         )
 
         return text_store
@@ -128,9 +114,7 @@ class DocLLM:
         text_split = self.split_contract(text_clean)
         chunks_enumerated = self.enumerate_chunks(text_split)
 
-        self.context[doc_id] = self.build_vector_store(
-            chunks_enumerated, persist_dir=self.persist_dir
-        )
+        self.context[doc_id] = self.build_vector_store(chunks_enumerated)
 
     def prompt(self, context: str, question: str) -> PROMPT_TYPE:
         return [
@@ -155,10 +139,7 @@ class DocLLM:
         """Multihop: сначала summary, потом уточнение full_text."""
         retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
-        multiretriever = MultiQueryRetriever.from_llm(
-            llm=self.base_llm, retriever=retriever
-        )
-        return multiretriever
+        return retriever
 
     def get_rag_context(self, question: str, file_id: str) -> str:
         vector_store = self.context.get(file_id)

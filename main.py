@@ -1,8 +1,10 @@
+import logging
+from uuid import uuid4
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from uuid import uuid4
+
 from doc_llm_core import DocLLM
-import logging
 from utils import get_google_doc_text
 
 logger = logging.getLogger("uvicorn.error")

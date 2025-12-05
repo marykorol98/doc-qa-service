@@ -1,8 +1,6 @@
-import requests
 import re
-import random
-import numpy as np
-import torch
+
+import requests
 
 
 def get_google_doc_text(doc_url: str) -> str:
@@ -27,13 +25,3 @@ def get_google_doc_text(doc_url: str) -> str:
         )
 
     return response.text
-
-
-def set_global_seed(seed: int = 42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
