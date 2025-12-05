@@ -80,7 +80,6 @@ class DocLLM:
     def split_contract(self, text: str) -> list[str]:
         """
         Делит договор на смысловые разделы и по длине.
-        Очень короткие чанки (< min_chunk_size) объединяются с предыдущими.
         """
         section_pattern = r"(?=(?:\n\d+\.\s+)|(?:\nПриложение\s*№\s*\d+))"
         raw_sections = re.split(section_pattern, text)
@@ -110,6 +109,7 @@ class DocLLM:
         return text_store
 
     def load_context_from_doc(self, doc_id, doc_text: str):
+        """Весь путь предобработки текста документа"""
         text_clean = self.clean_text(doc_text)
         text_split = self.split_contract(text_clean)
         chunks_enumerated = self.enumerate_chunks(text_split)
@@ -136,12 +136,14 @@ class DocLLM:
         ]
 
     def get_retriever(self, vector_store):
-        """Multihop: сначала summary, потом уточнение full_text."""
         retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
         return retriever
 
     def get_rag_context(self, question: str, file_id: str) -> str:
+        """
+        Поиск по созданной RAG
+        """
         vector_store = self.context.get(file_id)
         if not vector_store:
             raise RuntimeError("Document is not loaded!")
@@ -151,6 +153,9 @@ class DocLLM:
         return "\n\n".join(d.page_content for d in texts)
 
     def ask(self, q_id: str, file_id: str, question: str) -> str:
+        """
+        Оснавной inference
+        """
         context = self.get_rag_context(question, file_id)
 
         self.logger(f"context:\n\n{context}")
