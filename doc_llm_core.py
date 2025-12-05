@@ -81,7 +81,7 @@ class DocLLM:
         """
         Делит договор на смысловые разделы и по длине.
         """
-        section_pattern = r"(?=(?:\n\d+\.\s+)|(?:\nПриложение\s*№\s*\d+))"
+        section_pattern = r"(?=\n\d+\.\s+)"
         raw_sections = re.split(section_pattern, text)
 
         return raw_sections
