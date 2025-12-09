@@ -79,30 +79,24 @@ class DocLLM:
 
     def split_contract(self, text: str) -> list[str]:
         """
-        Делит договор на смысловые разделы и по длине.
+        Разбивает договор по заголовкам вида:
+        '1. ...', '2. ...', '3. ...'
         """
         section_pattern = r"(?=\n\d+\.\s+)"
         raw_sections = re.split(section_pattern, text)
 
         return raw_sections
 
-    def enumerate_chunks(self, chunks: list[str]) -> list[str]:
-        """Добавляет CHUNK i/n заголовки."""
-        total = len(chunks)
-        output = []
-        for i, ch in enumerate(chunks, start=1):
-            output.append(f"=== CHUNK {i}/{total} ===\n{ch}")
-        return output
-
     def build_vector_store(self, chunks: list[str]):
         """Создаёт Chroma хранилище для текстов"""
         embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-mpnet-base-v2",
+            model_name="BAAI/bge-large-zh-v1.5",
             model_kwargs={"device": self.device},
         )
 
         text_store = Chroma.from_texts(
             texts=chunks,
+            metadatas=[{"chunk_id": i} for i in range(len(chunks))],
             embedding=embeddings,
         )
 
@@ -112,9 +106,8 @@ class DocLLM:
         """Весь путь предобработки текста документа"""
         text_clean = self.clean_text(doc_text)
         text_split = self.split_contract(text_clean)
-        chunks_enumerated = self.enumerate_chunks(text_split)
 
-        self.context[doc_id] = self.build_vector_store(chunks_enumerated)
+        self.context[doc_id] = self.build_vector_store(text_split)
 
     def prompt(self, context: str, question: str) -> PROMPT_TYPE:
         return [
